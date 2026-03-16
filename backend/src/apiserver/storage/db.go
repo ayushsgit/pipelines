@@ -22,7 +22,6 @@ import (
 
 	"github.com/VividCortex/mysqlerr"
 	"github.com/go-sql-driver/mysql"
-	sqlite3 "github.com/mattn/go-sqlite3"
 )
 
 // DB a struct wrapping plain sql library with SQL dialect, to solve any feature
@@ -42,25 +41,11 @@ func NewDB(db *sql.DB, dialect SQLDialect) *DB {
 // It is used to bridge the difference between mysql (production) and sqlite
 // (test).
 type SQLDialect interface {
-	// GroupConcat builds query to group concatenate `expr` in each row and use `separator`
-	// to join rows in a group.
 	GroupConcat(expr string, separator string) string
-
-	// Concat builds query to concatenete a list of `exprs` into a single string with
-	// a separator in between.
 	Concat(exprs []string, separator string) string
-
-	// Check whether the error is a SQL duplicate entry error or not
 	IsDuplicateError(err error) bool
-
-	// Modifies the SELECT clause in query to return one that locks the selected
-	// row for update.
 	SelectForUpdate(query string) string
-
-	// Inserts new rows and updates duplicates based on the key column.
 	Upsert(query string, key string, overwrite bool, columns ...string) string
-
-	// Updates a table using UPDATE with JOIN (mysql/production) or UPDATE FROM (sqlite/test).
 	UpdateWithJointOrFrom(targetTable, joinTable, setClause, joinClause, whereClause string) string
 }
 
@@ -95,59 +80,16 @@ func (d MySQLDialect) UpdateWithJointOrFrom(targetTable, joinTable, setClause, j
 	return fmt.Sprintf("UPDATE %s INNER JOIN %s ON %s SET %s WHERE %s", targetTable, joinTable, joinClause, setClause, whereClause)
 }
 
-// SQLiteDialect implements SQLDialect with sqlite dialect implementation.
-type SQLiteDialect struct{}
-
-func (d SQLiteDialect) GroupConcat(expr string, separator string) string {
-	var buffer bytes.Buffer
-	buffer.WriteString("GROUP_CONCAT(")
-	buffer.WriteString(expr)
-	if separator != "" {
-		buffer.WriteString(fmt.Sprintf(", \"%s\"", separator))
-	}
-	buffer.WriteString(")")
-	return buffer.String()
-}
-
-func (d SQLiteDialect) Concat(exprs []string, separator string) string {
-	separatorSQL := "||"
-	if separator != "" {
-		separatorSQL = fmt.Sprintf(`||"%s"||`, separator)
-	}
-	return strings.Join(exprs, separatorSQL)
-}
-
 func (d MySQLDialect) SelectForUpdate(query string) string {
 	return query + " FOR UPDATE"
-}
-
-func (d SQLiteDialect) SelectForUpdate(query string) string {
-	return query
 }
 
 func (d MySQLDialect) Upsert(query string, key string, overwrite bool, columns ...string) string {
 	return fmt.Sprintf("%v ON DUPLICATE KEY UPDATE %v", query, prepareUpdateSuffixMySQL(columns, overwrite))
 }
 
-func (d SQLiteDialect) Upsert(query string, key string, overwrite bool, columns ...string) string {
-	return fmt.Sprintf("%v ON CONFLICT(%v) DO UPDATE SET %v", query, key, prepareUpdateSuffixSQLite(columns, overwrite))
-}
-
-func (d SQLiteDialect) IsDuplicateError(err error) bool {
-	sqlError, ok := err.(sqlite3.Error)
-	return ok && sqlError.Code == sqlite3.ErrConstraint
-}
-
-func (d SQLiteDialect) UpdateWithJointOrFrom(targetTable, joinTable, setClause, joinClause, whereClause string) string {
-	return fmt.Sprintf("UPDATE %s SET %s FROM %s WHERE %s AND %s", targetTable, setClause, joinTable, joinClause, whereClause)
-}
-
 func NewMySQLDialect() MySQLDialect {
 	return MySQLDialect{}
-}
-
-func NewSQLiteDialect() SQLiteDialect {
-	return SQLiteDialect{}
 }
 
 func prepareUpdateSuffixMySQL(columns []string, overwrite bool) string {
@@ -155,20 +97,6 @@ func prepareUpdateSuffixMySQL(columns []string, overwrite bool) string {
 	if overwrite {
 		for _, c := range columns {
 			columnsExtended = append(columnsExtended, fmt.Sprintf("%[1]v=VALUES(%[1]v)", c))
-		}
-	} else {
-		for _, c := range columns {
-			columnsExtended = append(columnsExtended, fmt.Sprintf("%[1]v=%[1]v", c))
-		}
-	}
-	return strings.Join(columnsExtended, ",")
-}
-
-func prepareUpdateSuffixSQLite(columns []string, overwrite bool) string {
-	columnsExtended := make([]string, 0)
-	if overwrite {
-		for _, c := range columns {
-			columnsExtended = append(columnsExtended, fmt.Sprintf("%[1]v=excluded.%[1]v", c))
 		}
 	} else {
 		for _, c := range columns {

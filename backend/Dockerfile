@@ -13,7 +13,9 @@
 # limitations under the License.
 
 # 1. Build api server application
-FROM golang:1.26.1-bookworm AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26.1-bookworm AS builder
+ARG TARGETOS
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y cmake clang musl-dev openssl
 WORKDIR /go/src/github.com/kubeflow/pipelines
 
@@ -25,10 +27,10 @@ COPY ./api/go.mod ./api/go.mod
 RUN GO111MODULE=on go mod download
 
 COPY . .
-RUN GO111MODULE=on go build -o /bin/apiserver backend/src/apiserver/*.go
+RUN GO111MODULE=on CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -a -installsuffix cgo -o /bin/apiserver backend/src/apiserver/*.go
 
 # 2. Compile preloaded pipeline samples
-FROM python:3.11-slim AS compiler
+FROM --platform=$BUILDPLATFORM python:3.11-slim AS compiler
 RUN apt-get update -y && apt-get install --no-install-recommends -y -q default-jdk python3-setuptools python3-dev jq wget curl
 RUN wget https://bootstrap.pypa.io/get-pip.py && python3 get-pip.py
 COPY backend/requirements.txt .
